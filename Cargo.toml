@@ -1,0 +1,13 @@
+[package]
+name = "fern-format"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fern = "0.6"
+time = {version = "0.3", features = ["local-offset", "formatting", "macros"]}
+owo-colors = "4.0"
+supports-color = "3.0"
+
+[dev-dependencies]
+log = "0.4"

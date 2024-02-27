@@ -1,3 +1,5 @@
+use std::{collections::HashMap, thread::ThreadId};
+
 use owo_colors::{OwoColorize, Style};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -70,6 +72,8 @@ impl Format {
             Colorize::ColorIf(stream) => supports_color(stream),
         };
 
+        let thread_colors = HashMap::<ThreadId, ()>::new();
+
         move |out, message, record| {
             // TODO: transform each of these if-cases to a struct that implements Display
             // to avoid allocating so many temporary strings.
@@ -86,8 +90,12 @@ impl Format {
             };
 
             let thread_name = if self.thread_names {
-                // TODO: print ID if name is not available
-                format!(" ({})", std::thread::current().name().unwrap_or("??"))
+                let cur = std::thread::current();
+                if let Some(name) = cur.name() {
+                    format!(" ({})", name)
+                } else {
+                    format!(" ({})", threadid_as_u64(cur.id()))
+                }
             } else {
                 String::new()
             };
@@ -123,4 +131,14 @@ fn level_style(level: log::Level) -> Style {
         log::Level::Debug => Style::new().white(),
         log::Level::Trace => Style::new().dimmed(),
     }
+}
+
+// https://github.com/rust-lang/rust/issues/67939
+// TODO: use the stabilzed function when and if it is stabilized
+// TODO: error handling?
+fn threadid_as_u64(id: ThreadId) -> u64 {
+    let string = format!("{:?}", id);
+    let string = string.strip_prefix("ThreadId(").unwrap();
+    let string = string.strip_suffix(")").unwrap();
+    string.parse().unwrap()
 }

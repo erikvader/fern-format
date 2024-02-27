@@ -1,4 +1,4 @@
-use std::{collections::HashMap, thread::ThreadId};
+use std::{collections::HashMap, fmt::Display, thread::ThreadId};
 
 use owo_colors::{OwoColorize, Style};
 use time::{OffsetDateTime, UtcOffset};
@@ -62,9 +62,6 @@ impl Format {
                 UtcOffset::UTC
             }
         };
-        let date_format = time::macros::format_description!(
-            "[hour repr:24]:[minute]:[second].[subsecond digits:6]"
-        );
 
         let use_color = match self.colorize {
             Colorize::BlackWhite => false,
@@ -75,35 +72,17 @@ impl Format {
         let thread_colors = HashMap::<ThreadId, ()>::new();
 
         move |out, message, record| {
-            // TODO: transform each of these if-cases to a struct that implements Display
-            // to avoid allocating so many temporary strings.
-            let now = OffsetDateTime::now_utc()
-                .to_offset(utc_offset)
-                .time()
-                .format(date_format)
-                .unwrap_or_else(|_| "??:??:??.??????".into());
-
+            let now = Time { offset: utc_offset };
             let style = if use_color {
                 level_style(record.level())
             } else {
                 Style::new()
             };
 
-            let thread_name = if self.thread_names {
-                let cur = std::thread::current();
-                if let Some(name) = cur.name() {
-                    format!(" ({})", name)
-                } else {
-                    format!(" ({})", threadid_as_u64(cur.id()))
-                }
-            } else {
-                String::new()
-            };
-
-            let level = if use_color {
-                String::new()
-            } else {
-                format!(" [{}]", record.level())
+            let thread_name = ThreadName { format: &self };
+            let level = Level {
+                level: record.level(),
+                use_color,
             };
 
             out.finish(format_args!(
@@ -115,6 +94,60 @@ impl Format {
                 message.style(style),
             ))
         }
+    }
+}
+
+struct Time {
+    offset: UtcOffset,
+}
+
+impl Display for Time {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const DATE_FORMAT: &[time::format_description::FormatItem<'_>] = time::macros::format_description!(
+            "[hour repr:24]:[minute]:[second].[subsecond digits:6]"
+        );
+
+        let now = OffsetDateTime::now_utc()
+            .to_offset(self.offset)
+            .time()
+            // TODO: figure out how to format this directly into the formatter using
+            // format_into
+            .format(DATE_FORMAT)
+            .unwrap_or_else(|_| "??:??:??.??????".into());
+        write!(f, "{}", now)
+    }
+}
+
+struct ThreadName<'a> {
+    format: &'a Format,
+}
+
+impl Display for ThreadName<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.format.thread_names {
+            let cur = std::thread::current();
+            if let Some(name) = cur.name() {
+                write!(f, " ({})", name)?;
+            } else {
+                write!(f, " ({})", threadid_as_u64(cur.id()))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+struct Level {
+    level: log::Level,
+    use_color: bool,
+}
+
+impl Display for Level {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.use_color {
+            write!(f, " [{}]", self.level)?;
+        }
+
+        Ok(())
     }
 }
 

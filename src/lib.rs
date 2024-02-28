@@ -1,4 +1,12 @@
-use std::{collections::HashMap, fmt::Display, thread::ThreadId};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        RwLock,
+    },
+    thread::ThreadId,
+};
 
 use owo_colors::{OwoColorize, Style};
 use time::{OffsetDateTime, UtcOffset};
@@ -22,7 +30,18 @@ enum Colorize {
     ColorIf(Stream),
 }
 
+impl Colorize {
+    fn use_color(&self) -> bool {
+        match self {
+            Colorize::BlackWhite => false,
+            Colorize::Color => true,
+            Colorize::ColorIf(stream) => supports_color(*stream),
+        }
+    }
+}
+
 impl Format {
+    /// Creates a blank `Format` that prints without colors and no thread names
     pub fn new() -> Self {
         Self {
             colorize: Colorize::BlackWhite,
@@ -31,21 +50,25 @@ impl Format {
         }
     }
 
+    /// Enable printing with colors if the given stream supports it.
     pub fn color_if_supported(mut self, stream: Stream) -> Self {
         self.colorize = Colorize::ColorIf(stream);
         self
     }
 
+    /// Force enable colors
     pub fn force_colors(mut self) -> Self {
         self.colorize = Colorize::Color;
         self
     }
 
+    /// Print thread names/id
     pub fn log_thread_names(mut self) -> Self {
         self.thread_names = true;
         self
     }
 
+    /// Give each thread its own color on their printed names
     pub fn uniquely_color_threads(mut self) -> Self {
         self.color_threads = true;
         self.log_thread_names()
@@ -55,50 +78,76 @@ impl Format {
         self,
     ) -> impl Fn(fern::FormatCallback<'_>, &std::fmt::Arguments<'_>, &log::Record<'_>)
     {
-        let utc_offset = match UtcOffset::current_local_offset() {
+        let use_color = self.colorize.use_color();
+        let now = Time::new();
+        let thread_name =
+            ThreadName::new(use_color && self.color_threads, self.thread_names);
+
+        move |out, message, record| {
+            let msg = Message::new(use_color, record.level(), message);
+            let level = Level::new(record.level(), use_color);
+
+            out.finish(format_args!(
+                "{}{}{} {}:{}",
+                now,
+                thread_name,
+                level,
+                record.target(),
+                msg,
+            ))
+        }
+    }
+}
+
+// TODO: organize into modules
+
+struct Message<'a> {
+    colorize: bool,
+    level: log::Level,
+    message: &'a std::fmt::Arguments<'a>,
+}
+
+impl<'a> Message<'a> {
+    fn new(
+        colorize: bool,
+        level: log::Level,
+        message: &'a std::fmt::Arguments<'a>,
+    ) -> Self {
+        Self {
+            colorize,
+            level,
+            message,
+        }
+    }
+}
+
+impl<'a> Display for Message<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let style = if self.colorize {
+            level_style(self.level)
+        } else {
+            Style::new()
+        };
+
+        write!(f, " {}", self.message.style(style))
+    }
+}
+
+struct Time {
+    offset: UtcOffset,
+}
+
+impl Time {
+    fn new() -> Self {
+        let offset = match UtcOffset::current_local_offset() {
             Ok(offset) => offset,
             Err(e) => {
                 eprintln!("Failed to get the current UTC offset: {e:?}");
                 UtcOffset::UTC
             }
         };
-
-        let use_color = match self.colorize {
-            Colorize::BlackWhite => false,
-            Colorize::Color => true,
-            Colorize::ColorIf(stream) => supports_color(stream),
-        };
-
-        let thread_colors = HashMap::<ThreadId, ()>::new();
-
-        move |out, message, record| {
-            let now = Time { offset: utc_offset };
-            let style = if use_color {
-                level_style(record.level())
-            } else {
-                Style::new()
-            };
-
-            let thread_name = ThreadName { format: &self };
-            let level = Level {
-                level: record.level(),
-                use_color,
-            };
-
-            out.finish(format_args!(
-                "{}{}{} {}: {}",
-                now,
-                thread_name,
-                level,
-                record.target(),
-                message.style(style),
-            ))
-        }
+        Self { offset }
     }
-}
-
-struct Time {
-    offset: UtcOffset,
 }
 
 impl Display for Time {
@@ -118,19 +167,64 @@ impl Display for Time {
     }
 }
 
-struct ThreadName<'a> {
-    format: &'a Format,
+struct ThreadName {
+    colorize: bool,
+    print: bool,
+    thread_colors: RwLock<HashMap<ThreadId, Style>>,
+    index: AtomicU8,
 }
 
-impl Display for ThreadName<'_> {
+impl ThreadName {
+    fn new(colorize: bool, print: bool) -> Self {
+        let thread_colors = RwLock::new(HashMap::<ThreadId, Style>::new());
+        let index = 0.into();
+        Self {
+            colorize,
+            print,
+            thread_colors,
+            index,
+        }
+    }
+}
+
+impl Display for ThreadName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.format.thread_names {
-            let cur = std::thread::current();
-            if let Some(name) = cur.name() {
-                write!(f, " ({})", name)?;
-            } else {
-                write!(f, " ({})", threadid_as_u64(cur.id()))?;
+        if !self.print {
+            return Ok(());
+        }
+
+        let cur = std::thread::current();
+        let thread_style = if self.colorize {
+            let id = cur.id();
+            match {
+                let thread_colors = self.thread_colors.read().unwrap();
+                thread_colors.get(&id).copied()
+            } {
+                Some(style) => style,
+                None => {
+                    let mut thread_colors = self.thread_colors.write().unwrap();
+                    if let Some(style) = thread_colors.get(&id).copied() {
+                        style
+                    } else {
+                        let i = self.index.fetch_add(1, Ordering::SeqCst);
+                        let style = gen_color(i);
+                        thread_colors.insert(id, style);
+                        style
+                    }
+                }
             }
+        } else {
+            Style::new()
+        };
+
+        if let Some(name) = cur.name() {
+            write!(f, " {}", format_args!("({})", name).style(thread_style))?;
+        } else {
+            write!(
+                f,
+                " {}",
+                format_args!("({})", threadid_as_u64(cur.id())).style(thread_style)
+            )?;
         }
         Ok(())
     }
@@ -139,6 +233,12 @@ impl Display for ThreadName<'_> {
 struct Level {
     level: log::Level,
     use_color: bool,
+}
+
+impl Level {
+    fn new(level: log::Level, use_color: bool) -> Self {
+        Self { level, use_color }
+    }
 }
 
 impl Display for Level {
@@ -174,4 +274,20 @@ fn threadid_as_u64(id: ThreadId) -> u64 {
     let string = string.strip_prefix("ThreadId(").unwrap();
     let string = string.strip_suffix(")").unwrap();
     string.parse().unwrap()
+}
+
+fn gen_color(i: u8) -> Style {
+    let style = Style::new().italic();
+    let style = match i % 8 {
+        0 => style,
+        1 => style.bright_blue(),
+        2 => style.bright_yellow(),
+        3 => style.bright_cyan(),
+        4 => style.bright_purple(),
+        5 => style.bright_green(),
+        6 => style.bright_magenta(),
+        7 => style.bright_red(),
+        _ => unreachable!(),
+    };
+    style
 }

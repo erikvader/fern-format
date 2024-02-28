@@ -1,14 +1,8 @@
 use fern_format::Format;
-use fern_format::Stream;
 
 fn main() {
     fern::Dispatch::new()
-        .format(
-            Format::new()
-                .color_if_supported(Stream::Stdout)
-                .uniquely_color_threads()
-                .callback(),
-        )
+        .format(Format::new().log_thread_names().callback())
         .chain(std::io::stdout())
         .apply()
         .unwrap();

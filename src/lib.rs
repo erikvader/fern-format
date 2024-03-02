@@ -63,7 +63,7 @@ impl Format {
     }
 
     /// Print thread names/id
-    pub fn log_thread_names(mut self) -> Self {
+    pub fn thread_names(mut self) -> Self {
         self.thread_names = true;
         self
     }
@@ -71,7 +71,7 @@ impl Format {
     /// Give each thread its own color on their printed names
     pub fn uniquely_color_threads(mut self) -> Self {
         self.color_threads = true;
-        self.log_thread_names()
+        self.thread_names()
     }
 
     pub fn callback(

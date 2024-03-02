@@ -277,17 +277,41 @@ fn threadid_as_u64(id: ThreadId) -> u64 {
 }
 
 fn gen_color(i: u8) -> Style {
-    let style = Style::new().italic();
-    let style = match i % 8 {
+    const BOLD: u8 = 2;
+    const COLOR: u8 = 7;
+    const ITALIC: u8 = 2;
+    let total = BOLD * COLOR * ITALIC;
+
+    let style = Style::new();
+
+    let i = i % total;
+    let total = total / ITALIC;
+    let style = match i / total {
         0 => style,
+        1 => style.italic(),
+        _ => unreachable!(),
+    };
+
+    let i = i % total;
+    let total = total / BOLD;
+    let style = match i / total {
+        0 => style,
+        1 => style.bold(),
+        _ => unreachable!(),
+    };
+
+    let i = i % total;
+    let total = total / COLOR;
+    let style = match i / total {
+        0 => style.bright_white(),
         1 => style.bright_blue(),
         2 => style.bright_yellow(),
         3 => style.bright_cyan(),
         4 => style.bright_purple(),
         5 => style.bright_green(),
-        6 => style.bright_magenta(),
-        7 => style.bright_red(),
+        6 => style.bright_red(),
         _ => unreachable!(),
     };
+
     style
 }

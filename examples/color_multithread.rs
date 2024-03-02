@@ -13,28 +13,18 @@ fn main() {
         .apply()
         .unwrap();
 
-    let handle1 = std::thread::spawn(|| {
-        log::trace!("trace");
-        log::debug!("debug");
-        log::info!("info");
-        log::warn!("warn");
-        log::error!("error");
+    std::thread::scope(|s| {
+        for i in 0..29 {
+            std::thread::Builder::new()
+                .name(i.to_string())
+                .spawn_scoped(s, || {
+                    log::trace!("trace");
+                    log::debug!("debug");
+                    log::info!("info");
+                    log::warn!("warn");
+                    log::error!("error");
+                })
+                .unwrap();
+        }
     });
-
-    let handle2 = std::thread::spawn(|| {
-        log::trace!("trace");
-        log::debug!("debug");
-        log::info!("info");
-        log::warn!("warn");
-        log::error!("error");
-    });
-
-    log::trace!("trace");
-    log::debug!("debug");
-    log::info!("info");
-    log::warn!("warn");
-    log::error!("error");
-
-    handle1.join().unwrap();
-    handle2.join().unwrap();
 }
